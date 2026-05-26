@@ -8,6 +8,14 @@ export default function RootLayout() {
       <StatusBar style="light" />
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="watch/[id]"
+          options={{
+            headerStyle: { backgroundColor: '#09090b' },
+            headerTintColor: '#ffffff',
+            presentation: 'card',
+          }}
+        />
         <Stack.Screen name="+not-found" />
       </Stack>
     </>
