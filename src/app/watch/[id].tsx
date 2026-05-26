@@ -29,6 +29,7 @@ import {
   ScrollView,
   Pressable,
   Platform,
+  StyleSheet,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -83,9 +84,11 @@ export default function WatchScreen() {
 
   const { id, type, title, season, episode, localUri } = params;
 
-  // Parsed numerics (season/episode arrive as strings from the router).
-  const seasonNum = season ? parseInt(season, 10) : undefined;
-  const episodeNum = episode ? parseInt(episode, 10) : undefined;
+  // Parsed numerics — default series to S1E1 when not provided.
+  const seasonNum = season ? parseInt(season, 10) : (type === 'series' ? 1 : undefined);
+  const episodeNum = episode ? parseInt(episode, 10) : (type === 'series' || type === 'anime' ? 1 : undefined);
+  const effectiveSeason = type === 'series' ? (seasonNum ?? 1) : seasonNum;
+  const effectiveEpisode = (type === 'series' || type === 'anime') ? (episodeNum ?? 1) : episodeNum;
 
   // ---------------------------------------------------------------------------
   // State
@@ -150,18 +153,12 @@ export default function WatchScreen() {
 
     try {
       if (type === 'anime') {
-        if (!episodeNum) {
-          throw new Error('Episode number is required for anime.');
-        }
         setStatusText('Contacting AllManga…');
-        results = await scrapeAllManga(id, episodeNum);
+        results = await scrapeAllManga(id, effectiveEpisode ?? 1);
       } else {
-        // movie or series
-        if (type === 'series' && (seasonNum == null || episodeNum == null)) {
-          throw new Error('Season and episode are required for series.');
-        }
+        // movie or series — series defaults to S1E1 if not specified
         setStatusText('Contacting VidSrc…');
-        results = await scrapeVidSrc(id, type, seasonNum, episodeNum);
+        results = await scrapeVidSrc(id, type, effectiveSeason, effectiveEpisode);
       }
     } catch (err) {
       const message =
@@ -186,7 +183,7 @@ export default function WatchScreen() {
     setStreams(results);
     setActiveStreamIndex(0);
     setLoadState('success');
-  }, [id, type, seasonNum, episodeNum]);
+  }, [id, type, effectiveSeason, effectiveEpisode, localUri]);
 
   // Run on mount.
   useEffect(() => {
@@ -198,7 +195,9 @@ export default function WatchScreen() {
   // ---------------------------------------------------------------------------
 
   const activeStream = streams[activeStreamIndex] ?? null;
-  const episodeLabel = buildEpisodeLabel(type ?? '', season, episode);
+  const dispSeason = season ?? (type === 'series' ? '1' : undefined);
+  const dispEpisode = episode ?? (type === 'series' || type === 'anime' ? '1' : undefined);
+  const episodeLabel = buildEpisodeLabel(type ?? '', dispSeason, dispEpisode);
   const displayTitle = title ?? id ?? 'Watch';
   const headerTitle = episodeLabel
     ? `${displayTitle} · ${episodeLabel}`
@@ -210,39 +209,26 @@ export default function WatchScreen() {
 
   function renderLoading() {
     return (
-      <View className="flex-1 items-center justify-center bg-black gap-y-4">
+      <View style={ws.centered}>
         <ActivityIndicator size="large" color="#ef4444" />
-        <Text className="text-zinc-400 text-sm tracking-wide">{statusText}</Text>
+        <Text style={ws.statusText}>{statusText}</Text>
       </View>
     );
   }
 
   function renderError() {
     return (
-      <View className="flex-1 items-center justify-center bg-black px-8 gap-y-6">
-        {/* Error icon placeholder */}
-        <View className="w-16 h-16 rounded-full bg-red-950 items-center justify-center">
-          <Text className="text-red-400 text-3xl">✕</Text>
+      <View style={ws.centered}>
+        <View style={ws.errorIcon}>
+          <Text style={ws.errorIconText}>✕</Text>
         </View>
-
-        <Text className="text-white text-lg font-semibold text-center">
-          Stream Unavailable
-        </Text>
-        <Text className="text-zinc-500 text-sm text-center leading-relaxed">
-          {errorMessage}
-        </Text>
-
-        <Pressable
-          onPress={() => void runScraper()}
-          className="mt-2 bg-red-600 px-8 py-3 rounded-full active:opacity-70"
-        >
-          <Text className="text-white font-semibold text-sm tracking-wide">
-            Retry
-          </Text>
+        <Text style={ws.errorTitle}>Stream Unavailable</Text>
+        <Text style={ws.errorBody}>{errorMessage}</Text>
+        <Pressable onPress={() => void runScraper()} style={ws.retryBtn}>
+          <Text style={ws.retryBtnText}>Retry</Text>
         </Pressable>
-
-        <Pressable onPress={() => router.back()} className="active:opacity-60">
-          <Text className="text-zinc-500 text-sm">Go back</Text>
+        <Pressable onPress={() => router.back()} style={ws.backBtn}>
+          <Text style={ws.backBtnText}>Go back</Text>
         </Pressable>
       </View>
     );
@@ -250,57 +236,27 @@ export default function WatchScreen() {
 
   function renderServerPicker() {
     if (streams.length <= 1) return null;
-
     return (
-      <View className="mt-4 px-4">
-        <Text className="text-zinc-400 text-xs uppercase tracking-widest mb-3">
-          Available Servers
-        </Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerClassName="gap-x-2"
-        >
+      <View style={ws.serverPickerWrap}>
+        <Text style={ws.serverPickerLabel}>Available Servers</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           {streams.map((stream, index) => {
             const isActive = index === activeStreamIndex;
             return (
               <Pressable
                 key={`${stream.serverName}-${index}`}
                 onPress={() => setActiveStreamIndex(index)}
-                className={`flex-row items-center gap-x-2 px-4 py-2 rounded-full border ${
-                  isActive
-                    ? 'border-red-500 bg-red-950'
-                    : 'border-zinc-700 bg-zinc-900'
-                } active:opacity-70`}
+                style={[ws.serverChip, isActive && ws.serverChipActive]}
               >
-                {/* Format badge */}
-                <View
-                  className={`px-1.5 py-0.5 rounded text-xs font-bold ${streamTypeBadgeClass(
-                    stream.type,
-                  )}`}
-                >
-                  <Text
-                    className={`text-xs font-bold ${
-                      stream.type === 'mp4'
-                        ? 'text-emerald-300'
-                        : 'text-blue-300'
-                    }`}
-                  >
+                <View style={[ws.typeBadge, stream.type === 'mp4' ? ws.typeBadgeMp4 : ws.typeBadgeHls]}>
+                  <Text style={[ws.typeBadgeText, stream.type === 'mp4' ? ws.typeBadgeTextMp4 : ws.typeBadgeTextHls]}>
                     {stream.type.toUpperCase()}
                   </Text>
                 </View>
-
-                <Text
-                  className={`text-sm ${
-                    isActive ? 'text-white font-semibold' : 'text-zinc-400'
-                  }`}
-                >
+                <Text style={[ws.serverChipName, isActive && ws.serverChipNameActive]}>
                   {stream.serverName}
                 </Text>
-
-                {stream.quality && (
-                  <Text className="text-xs text-zinc-500">{stream.quality}</Text>
-                )}
+                {stream.quality && <Text style={ws.serverChipQuality}>{stream.quality}</Text>}
               </Pressable>
             );
           })}
@@ -311,60 +267,26 @@ export default function WatchScreen() {
 
   function renderSuccess() {
     if (!activeStream) return renderError();
-
     return (
-      <ScrollView
-        className="flex-1 bg-black"
-        contentContainerClassName="pb-12"
-        bounces={false}
-      >
-        {/* Video player — pinned to top, 16:9 */}
+      <ScrollView style={ws.successScroll} contentContainerStyle={ws.successContent} bounces={false}>
         <Player streamUrl={activeStream.url} autoPlay />
-
-        {/* Server picker */}
         {renderServerPicker()}
-
-        {/* Metadata row */}
-        <View className="mt-6 px-4 gap-y-1">
-          <Text className="text-white text-xl font-bold" numberOfLines={2}>
-            {displayTitle}
-          </Text>
-          {!!episodeLabel && (
-            <Text className="text-zinc-500 text-sm">{episodeLabel}</Text>
-          )}
-          <View className="flex-row items-center gap-x-3 mt-1">
-            <View
-              className={`px-2 py-0.5 rounded ${
-                activeStream.type === 'mp4' ? 'bg-emerald-900' : 'bg-blue-900'
-              }`}
-            >
-              <Text
-                className={`text-xs font-semibold ${
-                  activeStream.type === 'mp4'
-                    ? 'text-emerald-300'
-                    : 'text-blue-300'
-                }`}
-              >
+        <View style={ws.metaWrap}>
+          <Text style={ws.metaTitle} numberOfLines={2}>{displayTitle}</Text>
+          {!!episodeLabel && <Text style={ws.metaEpisode}>{episodeLabel}</Text>}
+          <View style={ws.metaRow}>
+            <View style={[ws.formatBadge, activeStream.type === 'mp4' ? ws.formatBadgeMp4 : ws.formatBadgeHls]}>
+              <Text style={[ws.formatBadgeText, activeStream.type === 'mp4' ? ws.formatBadgeTextMp4 : ws.formatBadgeTextHls]}>
                 {activeStream.type === 'mp4' ? 'MP4 · Offline Ready' : 'HLS Stream'}
               </Text>
             </View>
-            <Text className="text-zinc-600 text-xs">
-              via {activeStream.serverName}
-            </Text>
+            <Text style={ws.metaServer}>via {activeStream.serverName}</Text>
           </View>
         </View>
-
-        {/* Divider */}
-        <View className="h-px bg-zinc-800 mx-4 mt-6" />
-
-        {/* Stream info */}
-        <View className="mt-4 px-4 gap-y-2">
-          <Text className="text-zinc-500 text-xs uppercase tracking-widest">
-            Stream Info
-          </Text>
-          <Text className="text-zinc-400 text-xs font-mono" numberOfLines={2}>
-            {activeStream.url}
-          </Text>
+        <View style={ws.divider} />
+        <View style={ws.streamInfoWrap}>
+          <Text style={ws.streamInfoLabel}>Stream Info</Text>
+          <Text style={ws.streamInfoUrl} numberOfLines={2}>{activeStream.url}</Text>
         </View>
       </ScrollView>
     );
@@ -376,7 +298,6 @@ export default function WatchScreen() {
 
   return (
     <>
-      {/* Configure the Expo Router stack header for this screen */}
       <Stack.Screen
         options={{
           title: headerTitle,
@@ -385,8 +306,7 @@ export default function WatchScreen() {
           headerTitleStyle: { fontSize: 14 },
         }}
       />
-
-      <View className="flex-1 bg-black">
+      <View style={ws.root}>
         {loadState === 'loading' && renderLoading()}
         {loadState === 'error' && renderError()}
         {loadState === 'success' && renderSuccess()}
@@ -394,3 +314,50 @@ export default function WatchScreen() {
     </>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Styles (StyleSheet guarantees web + native parity)
+// ---------------------------------------------------------------------------
+const ws = StyleSheet.create({
+  root:               { flex: 1, backgroundColor: '#000' },
+  centered:           { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000', paddingHorizontal: 32, gap: 16 },
+  statusText:         { color: '#a1a1aa', fontSize: 13 },
+  errorIcon:          { width: 64, height: 64, borderRadius: 32, backgroundColor: '#450a0a', alignItems: 'center', justifyContent: 'center' },
+  errorIconText:      { color: '#f87171', fontSize: 28 },
+  errorTitle:         { color: '#fff', fontSize: 18, fontWeight: '600', textAlign: 'center' },
+  errorBody:          { color: '#71717a', fontSize: 13, textAlign: 'center', lineHeight: 20 },
+  retryBtn:           { marginTop: 8, backgroundColor: '#dc2626', paddingHorizontal: 32, paddingVertical: 12, borderRadius: 100 },
+  retryBtnText:       { color: '#fff', fontWeight: '600', fontSize: 14 },
+  backBtn:            { marginTop: 4 },
+  backBtnText:        { color: '#52525b', fontSize: 13 },
+  serverPickerWrap:   { marginTop: 16, paddingHorizontal: 16 },
+  serverPickerLabel:  { color: '#a1a1aa', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 10 },
+  serverChip:         { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 100, borderWidth: 1, borderColor: '#3f3f46', backgroundColor: '#18181b' },
+  serverChipActive:   { borderColor: '#ef4444', backgroundColor: '#450a0a' },
+  serverChipName:     { color: '#a1a1aa', fontSize: 13 },
+  serverChipNameActive: { color: '#fff', fontWeight: '600' },
+  serverChipQuality:  { color: '#52525b', fontSize: 11 },
+  typeBadge:          { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  typeBadgeMp4:       { backgroundColor: '#052e16' },
+  typeBadgeHls:       { backgroundColor: '#0c1a4e' },
+  typeBadgeText:      { fontSize: 10, fontWeight: '700' },
+  typeBadgeTextMp4:   { color: '#6ee7b7' },
+  typeBadgeTextHls:   { color: '#93c5fd' },
+  successScroll:      { flex: 1, backgroundColor: '#000' },
+  successContent:     { paddingBottom: 48 },
+  metaWrap:           { marginTop: 20, paddingHorizontal: 16, gap: 4 },
+  metaTitle:          { color: '#fff', fontSize: 20, fontWeight: '700' },
+  metaEpisode:        { color: '#71717a', fontSize: 13 },
+  metaRow:            { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6 },
+  formatBadge:        { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
+  formatBadgeMp4:     { backgroundColor: '#052e16' },
+  formatBadgeHls:     { backgroundColor: '#0c1a4e' },
+  formatBadgeText:    { fontSize: 11, fontWeight: '600' },
+  formatBadgeTextMp4: { color: '#6ee7b7' },
+  formatBadgeTextHls: { color: '#93c5fd' },
+  metaServer:         { color: '#52525b', fontSize: 11 },
+  divider:            { height: 1, backgroundColor: '#27272a', marginHorizontal: 16, marginTop: 20 },
+  streamInfoWrap:     { marginTop: 14, paddingHorizontal: 16, gap: 6 },
+  streamInfoLabel:    { color: '#71717a', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.5 },
+  streamInfoUrl:      { color: '#a1a1aa', fontSize: 11, fontFamily: 'monospace' },
+});

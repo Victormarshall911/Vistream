@@ -12,7 +12,7 @@ export default function DownloadsScreen() {
     const unsubscribe = subscribeToDownloads((list) => {
       setDownloads(list);
     });
-    return unsubscribe;
+    return () => { unsubscribe(); };
   }, []);
 
   function handlePlay(task: DownloadTask) {
